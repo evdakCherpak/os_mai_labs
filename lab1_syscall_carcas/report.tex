@@ -1,0 +1,277 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T2A]{fontenc}
+\usepackage[russian]{babel}
+\usepackage[margin=2cm]{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+\usepackage{graphicx}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    columns=fullflexible,
+    backgroundcolor=\color{gray!5}
+}
+
+\begin{document}
+
+\begin{titlepage}
+\begin{center}
+    \includegraphics[width=\textwidth]{media/mai_header.jpg}
+
+    \vspace{1cm}
+    Министерство науки и высшего образования Российской Федерации\\
+    Федеральное государственное бюджетное образовательное учреждение высшего образования\\
+    \textbf{Московский авиационный институт}\\
+    (Национальный исследовательский университет)
+
+    \vspace{1.5cm}
+    Институт № 8 «Компьютерные науки и прикладная математика»\\
+    Кафедра 806
+
+    \vspace{2cm}
+    {\large\textbf{Отчёт по лабораторной работе №1}}\\[0.3cm]
+    {\textbf{Дисциплина}}: «Операционные системы и архитектура компьютера»\\[0.3cm]
+    {\textbf{Тема}}: «Анализ профиля системных вызовов программы \texttt{ffmpeg}»\\[0.3cm]
+\end{center}
+
+\vspace{2cm}
+\begin{flushright}
+    {\textbf{Выполнил:}}\\ 
+    студент группы М8О-206БВ-25\\
+    Ширанков М.С.\\
+
+    {\textbf{Проверил:}}\\
+    Ассистент Центра ТОП-ИТ\\
+    Ефимов Д.А.
+\end{flushright}
+
+\vfill
+\begin{center}
+    Москва 2026
+\end{center}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section{Цель работы}
+Построить профиль системных вызовов программы (\texttt{ffmpeg})
+с помощью утилиты \texttt{strace}, получить статистику вызовов и
+разбить её по логическим подсистемам ядра (память, процессы/потоки,
+файловый ввод-вывод, сигналы, сеть), не смешивая их между собой.
+
+\section{Ход работы}
+В качестве исследуемой команды используется перекодирование видео
+\texttt{zazu\_input.mp4} с явным указанием видеокодека
+\texttt{libx264}:
+
+\begin{lstlisting}
+ffmpeg -i zazu_input.mp4 -c:v libx264 zazu_output.mp4
+\end{lstlisting}
+
+Команда задействует сразу несколько подсистем ОС:
+\begin{itemize}
+    \item чтение исходного видео и запись результирующего файла (файловый I/O);
+    \item динамическую загрузку разделяемых библиотек (\texttt{libavcodec},
+          \texttt{libx264} и др.) при старте процесса;
+    \item многопоточное кодирование кадров библиотекой \texttt{libx264}
+          (создание потоков и их синхронизацию);
+    \item управление памятью под буферы кадров и рабочие структуры кодека.
+\end{itemize}
+
+\section{Получение полного профиля вызовов}
+
+Флаг \texttt{-c} переводит \texttt{strace} в режим сбора статистики: вместо построчной
+трассировки каждого вызова выводится статистическая таблица (число вызовов,
+суммарное и среднее время, количество вызовов, завершившихся ошибкой). Флаг \texttt{-f}
+обязателен для \texttt{ffmpeg}, так как кодек \texttt{libx264} создаёт дочерние потоки
+через \texttt{clone3()} - без \texttt{-f} \texttt{strace} видит только главный поток и
+теряет всю статистику по кодированию.
+
+\begin{lstlisting}
+strace -f -c ffmpeg -i zazu_input.mp4 -c:v libx264 zazu_output.mp4
+\end{lstlisting}
+
+Результат выполнения (перекодирование тестового видео \texttt{zazu\_input.mp4} на
+4-ядерной машине):
+
+\begin{lstlisting}
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ------------------
+ 98.19    7.442150        1842      4039       330 futex
+  0.63    0.047605          44      1063           mmap
+  0.29    0.021859          51       421           mprotect
+  0.27    0.020194         196       103           munmap
+  0.12    0.009123          37       242           read
+  0.12    0.008736          38       228         5 openat
+  0.09    0.006535          28       229           fstat
+  0.08    0.005932          26       223           close
+  0.06    0.004730          32       147           write
+  0.04    0.003178         167        19           clone3
+  0.03    0.002501          32        77           rt_sigprocmask
+  0.03    0.002185          66        33           brk
+  0.01    0.000900          45        20           rseq
+  0.01    0.000861          45        19           madvise
+  0.01    0.000823          41        20           set_robust_list
+  0.01    0.000426          30        14         4 prctl
+  0.00    0.000195          27         7           lseek
+  0.00    0.000163          27         6           pselect6
+  0.00    0.000155          31         5           sched_getaffinity
+  0.00    0.000129          64         2         2 ioctl
+  0.00    0.000116          19         6           rt_sigaction
+  0.00    0.000116          38         3         3 access
+  ...
+------ ----------- ----------- --------- --------- ------------------
+100.00    7.579191        1090      6948       348 total
+\end{lstlisting}
+
+\subsection{Значение столбцов}
+\begin{itemize}
+    \item \textbf{\% time} - доля суммарного времени выполнения системных вызовов,
+          пришедшаяся на данный вызов (не доля времени всей программы - I/O-ожидание
+          и вычисления в пространстве пользователя сюда не входят);
+    \item \textbf{seconds} - суммарное время, потраченное ядром на обработку всех
+          вызовов этого типа;
+    \item \textbf{usecs/call} - среднее время одного вызова в микросекундах;
+    \item \textbf{calls} - сколько раз вызов был выполнен (суммарно по всем потокам,
+          так как использован \texttt{-f});
+    \item \textbf{errors} - сколько из этих вызовов завершились с кодом ошибки
+          (\texttt{-1} и установленным \texttt{errno});
+    \item \textbf{syscall} - имя системного вызова.
+\end{itemize}
+
+\subsection{Анализ результата}
+Основная долю времени, проведённого в системных вызовах, приходится на \texttt{futex}.
+\texttt{Libx264} распараллеливает кодирование кадров/срезов (slice-based
+threading) между рабочими потоками по числу ядер CPU (здесь - 4), а сами потоки
+создаются вызовом \texttt{clone3}. Синхронизация между ними (очередь заданий, условные переменные, мьютексы
+в реализации NPTL/glibc) реализована поверх futex, поэтому именно он доминирует
+и по числу вызовов, и по суммарному времени. Остальные вызовы (\texttt{mmap},
+\texttt{mprotect}, \texttt{munmap}, \texttt{brk}, \texttt{madvise}) - это управление
+памятью под буферы кадров и стеки потоков, а \texttt{read/openat/fstat/close/write} -
+чтение исходного файла, загрузка динамических библиотек кодеков при старте и запись
+результата.
+
+
+\section{Разделение профиля по логическим категориям}
+\label{sec:categories}
+
+Готовые классы \texttt{strace} (\texttt{\%memory}, \texttt{\%process}, \texttt{\%signal},
+\texttt{\%network}, \texttt{\%desc}, \texttt{\%file}, \texttt{\%ipc}, \texttt{\%clock})
+позволяют собрать статистику только по вызовам одной подсистемы, не смешивая их с
+остальными. Для каждой категории трассировка запускалась отдельным прогоном, чтобы категории физически не
+пересекались в выводе:
+
+\begin{lstlisting}
+# memory: mmap/munmap/mprotect/brk/madvise
+strace -f -c -e trace=%memory  -o mem_profile.log \
+    ffmpeg -i zazu_input.mp4 -c:v libx264 zazu_output.mp4
+
+# processes/threads: clone3/execve/wait4/exit_group
+strace -f -c -e trace=%process -o process_profile.log \
+    ffmpeg -i zazu_input.mp4 -c:v libx264 zazu_output.mp4
+
+# signals: rt_sigaction/rt_sigprocmask/tgkill
+strace -f -c -e trace=%signal  -o signal_profile.log \
+    ffmpeg -i zazu_input.mp4 -c:v libx264 zazu_output.mp4
+
+# file descriptors / I/O: read/write/open/close/fstat...
+strace -f -c -e trace=%desc    -o io_profile.log \
+    ffmpeg -i zazu_input.mp4 -c:v libx264 zazu_output.mp4
+
+# network: socket/connect/send*/recv*
+strace -f -c -e trace=%network -o net_profile.log \
+    ffmpeg -i zazu_input.mp4 -c:v libx264 zazu_output.mp4
+\end{lstlisting}
+
+\subsection{Категория: память (\texttt{\%memory})}
+\begin{lstlisting}
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 51.55    0.046484          43      1063           mmap
+ 23.83    0.021487          51       421           mprotect
+ 20.51    0.018489         179       103           munmap
+  3.16    0.002851         150        19           madvise
+  0.86    0.000774          23        33           brk
+  0.09    0.000079          79         1           mlock
+------ ----------- ----------- --------- --------- ----------------
+100.00    0.090164          54      1640           total
+\end{lstlisting}
+Преобладают \texttt{mmap}/\texttt{mprotect}/\texttt{munmap} - это загрузка
+динамических библиотек кодеков (\texttt{ld.so} отображает каждую \texttt{.so} в
+память и выставляет права страниц) и выделение буферов под кадры или потоковые стеки.
+
+\subsection{Категория: процессы и потоки (\texttt{\%process})}
+\begin{lstlisting}
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 82.63    0.002560         134        19           clone3
+ 17.37    0.000538         538         1           execve
+------ ----------- ----------- --------- --------- ----------------
+100.00    0.003098         154        20           total
+\end{lstlisting}
+Один \texttt{execve} - запуск самого процесса \texttt{ffmpeg}; 19 вызовов
+\texttt{clone3} - создание потоков пула кодирования \texttt{libx264}.
+При просмотре построчного лога с \texttt{-f} по такому
+количеству потоков часто встречаются строки вида \texttt{<unfinished ...>} и
+\texttt{<... resumed>}. \texttt{Strace} показывает чередование: если, пока один поток ожидает завершения системного вызова
+(например, блокирующего \texttt{futex} или \texttt{read}), планировщик
+переключается на другой поток и тот тоже входит в syscall, \texttt{strace}
+не может напечатать оба вызова как непрерывные строки - начатый, но ещё не
+завершившийся вызов помечается \texttt{<unfinished ...>}, а когда управление
+возвращается к его поток и вызов действительно завершается, соответствующая
+строка получает пометку \texttt{<... resumed>} с итоговым результатом.
+
+\subsection{Категория: сигналы (\texttt{\%signal})}
+\begin{lstlisting}
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 93.84    0.002454          31        77           rt_sigprocmask
+  6.16    0.000161          26         6           rt_sigaction
+------ ----------- ----------- --------- --------- ----------------
+100.00    0.002615          31        83           total
+\end{lstlisting}
+\texttt{rt\_sigprocmask} вызывается при каждом создании потока (glibc маскирует
+сигналы на время инициализации нового потока), \texttt{rt\_sigaction} - установка
+обработчиков (например, \texttt{SIGINT} для корректного завершения по Ctrl+C).
+
+\subsection{Категория: файловый ввод-вывод (\texttt{\%desc})}
+\begin{lstlisting}
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 57.66    0.046460          43      1063           mmap
+ 10.93    0.008807          38       228         5 openat
+  9.92    0.007994          32       243           read
+  8.11    0.006533          28       229           fstat
+  7.93    0.006390          28       223           close
+  4.39    0.003540          24       147           write
+  0.39    0.000312          44         7           pselect6
+  0.26    0.000209          29         7           lseek
+------ ----------- ----------- --------- --------- ----------------
+100.00    0.080570          37      2158         9 total
+\end{lstlisting}
+Здесь видно чтение исходного \texttt{zazu\_input.mp4}, запись результата и 
+множество пар \texttt{openat}/\\\texttt{fstat}/\texttt{close} - это динамический
+загрузчик ищет и открывает разделяемые библиотеки кодеков при старте процесса
+(5 из 228 \texttt{openat} завершились ошибкой \texttt{ENOENT} - обычный перебор
+путей поиска \texttt{.so}-файлов).
+
+\subsection{Категория: сеть (\texttt{\%network})}
+Вывод пуст. Поскольку и вход, и выход - локальные файлы, \texttt{ffmpeg} в этом
+сценарии ни разу не обращается к сетевому стеку (ни \texttt{socket}, ни
+\texttt{connect}, ни \texttt{sendto/recvfrom}).
+
+\section{Итог работы}
+В результате выполнения лабораторной работы были получены практические
+навыки профилирования реальной многопоточной программы: сбор статистики (\texttt{-c}),
+разделение по классам системных вызовов (\texttt{-e trace=\%class}),
+а также разбор сырых трасс для глубокого изучения
+понимания работы программы.
+
+\end{document}
