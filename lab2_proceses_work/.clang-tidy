@@ -1,0 +1,34 @@
+Checks: >
+  -*,
+  bugprone-*,
+  cppcoreguidelines-*,
+  performance-*,
+  readability-*,
+  modernize-*,
+  google-*,
+  misc-*,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -modernize-use-trailing-return-type
+
+CheckOptions:
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  # readability-identifier-naming.FunctionCase: CamelCase
+  readability-identifier-naming.NamespaceCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.PrivateMemberSuffix: '_'
+  readability-identifier-naming.ProtectedMemberSuffix: '_'
+  readability-identifier-naming.ConstantCase: CamelCase
+  readability-identifier-naming.ConstantPrefix: 'k'
+  readability-identifier-naming.GlobalConstantCase: CamelCase
+  readability-identifier-naming.GlobalConstantPrefix: 'k'
+  # fd is the conventional POSIX name for a file descriptor.
+  readability-identifier-length.IgnoredParameterNames: '^fd$'
+  readability-identifier-length.IgnoredVariableNames: '^fd$'
+  # macOS SDK splits POSIX symbols into private headers (sys/_types/_ssize_t.h,
+  # sys/fcntl.h, ...); the portable headers are the ones to include. sys/types.h
+  # is kept in common.h for ssize_t even though the SDK defines it elsewhere.
+  misc-include-cleaner.IgnoreHeaders: 'sys/types\.h;sys/_types/.*;_types/.*;sys/_types\.h;sys/errno\.h;sys/fcntl\.h;sys/signal\.h'

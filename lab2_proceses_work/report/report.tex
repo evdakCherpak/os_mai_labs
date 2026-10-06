@@ -1,0 +1,554 @@
+\documentclass[12pt,a4paper]{article}
+
+\makeatletter
+\input{log-style}
+\makeatother
+
+% Style for terminal output and strace logs: no C highlighting, no numbers.
+\lstdefinestyle{console}{
+  language={},
+  numbers=none,
+  frame=single,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  basicstyle=\footnotesize\ttfamily,
+  identifierstyle=\color{black},
+}
+
+% listings cannot read multibyte UTF-8: listingsutf8 recodes the source files
+% (Cyrillic comments) to KOI8-R on the fly.
+\usepackage{listingsutf8}
+\lstset{inputencoding=utf8/koi8-r}
+
+\hypersetup{hidelinks}
+
+% Monospaced identifiers cannot be hyphenated; let TeX stretch the spaces
+% instead of pushing them into the margin.
+\setlength{\emergencystretch}{3em}
+
+% Every line number of a source listing becomes a link target "<file>.<line>".
+\newcommand{\lstlinetarget}[1]{\raisebox{\baselineskip}[0pt][0pt]{\hypertarget{\lstname.#1}{}}#1}
+\lstset{numberstyle=\footnotesize\lstlinetarget}
+
+% Code references: \deffn{key}{file}{line} declares where a definition starts,
+% \fn{key} prints the key as a link, \coderef{key}{text} prints custom text.
+% The line numbers below must match the sources in ../src.
+\newcommand{\deffn}[3]{\expandafter\def\csname cref@#1\endcsname{#2.#3}}
+\newcommand{\coderef}[2]{%
+  \ifcsname cref@#1\endcsname
+    \hyperlink{\csname cref@#1\endcsname}{\textcolor{blue}{\texttt{#2}}}%
+  \else
+    \errmessage{Unknown code reference: #1}%
+  \fi}
+\newcommand{\fn}[1]{\coderef{#1}{\detokenize{#1}}}
+
+\deffn{master.c}{master.c}{1}
+\deffn{slave.c}{slave.c}{1}
+\deffn{common.h}{common.h}{1}
+\deffn{common.c}{common.c}{1}
+\deffn{Makefile}{Makefile}{1}
+
+\deffn{kChildrenCount}{master.c}{19}
+\deffn{kErrInput}{master.c}{22}
+\deffn{kErrSetup}{master.c}{23}
+\deffn{kErrChild1Write}{master.c}{24}
+\deffn{kErrChild2Write}{master.c}{25}
+\deffn{kErrChild1Status}{master.c}{26}
+\deffn{kErrChild2Status}{master.c}{27}
+\deffn{child_t}{master.c}{29}
+\deffn{check_std_fds}{master.c}{39}
+\deffn{close_fd}{master.c}{53}
+\deffn{set_cloexec}{master.c}{60}
+\deffn{open_pipe}{master.c}{68}
+\deffn{build_slave_path}{master.c}{80}
+\deffn{read_filename}{master.c}{99}
+\deffn{open_output_file}{master.c}{134}
+\deffn{is_same_regular_file}{master.c}{146}
+\deffn{spawn_slave}{master.c}{156}
+\deffn{wait_child}{master.c}{174}
+\deffn{start_children}{master.c}{213}
+\deffn{forward_lines}{master.c}{267}
+\deffn{finish_children}{master.c}{316}
+\deffn{master-main}{master.c}{332}
+
+\deffn{is_vowel}{slave.c}{8}
+\deffn{slave-main}{slave.c}{12}
+
+\deffn{kBlockSize}{common.h}{8}
+\deffn{kChildSetupFailed}{common.h}{13}
+\deffn{kChildExecFailed}{common.h}{14}
+\deffn{kSlaveReadFailed}{common.h}{19}
+\deffn{kSlaveWriteFailed}{common.h}{20}
+\deffn{read_retry}{common.c}{7}
+\deffn{write_all}{common.c}{15}
+
+\begin{document}
+
+\begin{titlepage}
+\begin{center}
+    \includegraphics[width=\textwidth]{mai_header.jpg}
+
+    \vspace{1cm}
+    Министерство науки и высшего образования Российской Федерации\\
+    Федеральное государственное бюджетное образовательное учреждение высшего образования\\
+    \textbf{Московский авиационный институт}\\
+    (Национальный исследовательский университет)
+
+    \vspace{1.5cm}
+    Институт № 8 \enquote{Компьютерные науки и прикладная математика}\\
+    Кафедра 806
+
+    \vspace{2cm}
+    {\large\textbf{Отчёт по лабораторной работе №2}}\\[0.3cm]
+    {\textbf{Дисциплина}}: \enquote{Операционные системы и архитектура компьютера}\\[0.3cm]
+    {\textbf{Тема}}: \enquote{Работа с процессами ОС}\\[0.3cm]
+    {\textbf{Вариант}}: 18
+\end{center}
+
+\vspace{2cm}
+\begin{flushright}
+    {\textbf{Выполнил:}}\\
+    студент группы М8О-206БВ-25\\
+    Ширанков М.С.\\
+
+    {\textbf{Проверил:}}\\
+    Ассистент Центра ТОП-ИТ\\
+    Ефимов Д.А.
+\end{flushright}
+
+\vfill
+\begin{center}
+    Москва 2026
+\end{center}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section{Цель работы}
+Приобрести практические навыки управления процессами в ОС семейства UNIX:
+порождения дочерних процессов (\texttt{fork}), замены их образа другой программой
+(\texttt{exec}), перенаправления стандартных потоков (\texttt{dup2}) и обмена
+данными между процессами через неименованные каналы (\texttt{pipe}), а также
+корректной обработки ошибок всех используемых системных вызовов.
+
+\section{Задание}
+Родительский процесс создаёт два дочерних процесса. Первой строкой пользователь
+вводит в консоль родительского процесса имя файла, который будет открыт на запись
+для \texttt{child1}, второй строкой "--- аналогичное имя для \texttt{child2}.
+Родительский и дочерний процессы должны быть представлены разными программами.
+
+Родительский процесс принимает от пользователя строки произвольной длины и
+пересылает их в \texttt{pipe1} или \texttt{pipe2} в зависимости от правила
+фильтрации. Процессы \texttt{child1} и \texttt{child2} обрабатывают строки и пишут
+результаты своей работы в стандартный вывод. Все возможные ошибки должны
+корректно обрабатываться.
+
+\textbf{Правило фильтрации (вариант 18):} нечётные строки отправляются в
+\texttt{pipe1}, чётные "--- в \texttt{pipe2}. Дочерние процессы удаляют из строк
+все гласные.
+
+\section{Ход работы}
+Решение состоит из двух программ и общего модуля (полный исходный код
+приведён в приложении~А):
+\begin{itemize}
+    \item \fn{master.c} "--- родительский процесс: читает имена файлов, создаёт
+          каналы, порождает дочерние процессы и распределяет строки между ними;
+    \item \fn{slave.c} "--- дочерняя программа: фильтр
+          \texttt{stdin}~$\rightarrow$~\texttt{stdout}, удаляющий гласные
+          \texttt{aeiouAEIOU};
+    \item \fn{common.c}, \fn{common.h} "--- общие функции ввода-вывода
+          (\fn{read_retry}, \fn{write_all}) и коды завершения.
+\end{itemize}
+
+Обе программы запускаются от одного и того же исполняемого файла \texttt{slave}:
+\texttt{child1} и \texttt{child2} "--- это два экземпляра одной программы,
+различающиеся только подключёнными к ним каналом и файлом. Сборка выполняется
+по \fn{Makefile} из корня лабораторной работы:
+
+\begin{lstlisting}[style=console]
+make
+./master
+\end{lstlisting}
+
+Ключевое решение: файл для дочернего процесса открывает родитель
+(\fn{open_output_file}), а затем через \texttt{dup2} подставляет его дескриптор
+на место стандартного вывода ребёнка (\fn{spawn_slave}). Поэтому дочерняя программа, как и требует задание, пишет результат
+в \texttt{stdout} и ничего не знает о файлах. Ошибка открытия файла при этом
+обнаруживается до порождения процессов.
+
+\section{Используемые системные вызовы}
+В программе используются следующие системные вызовы и функции стандартной
+библиотеки, являющиеся тонкими обёртками над ними:
+
+\begin{longtable}{|p{0.14\textwidth}|>{\raggedright\arraybackslash}p{0.47\textwidth}|>{\raggedright\arraybackslash}p{0.29\textwidth}|}
+\hline
+\rowcolor{lightgray}
+\textbf{Вызов} & \textbf{Назначение в программе} & \textbf{Где в коде} \\
+\hline
+\endhead
+\texttt{read} & чтение имён файлов (по одному байту) и строк (блоками по 4~КБ)
+               из \texttt{stdin}; чтение дочерним процессом своего канала &
+               \fn{read_retry}, \fn{read_filename}, \fn{forward_lines},
+               \coderef{slave-main}{main} (slave) \\
+\hline
+\texttt{write} & пересылка строк в каналы; запись результата дочерним процессом
+                в \texttt{stdout} & \fn{write_all} \\
+\hline
+\texttt{open} & открытие (создание, усечение) выходных файлов с флагом
+               \texttt{O\_CLOEXEC} & \fn{open_output_file} \\
+\hline
+\texttt{fstat} & проверка того, что оба имени не указывают на один и тот же файл &
+                \fn{is_same_regular_file} \\
+\hline
+\texttt{pipe} & создание двух неименованных каналов \texttt{pipe1}, \texttt{pipe2} &
+               \fn{open_pipe} \\
+\hline
+\texttt{fcntl} & проверка открытости дескрипторов 0--2 (\texttt{F\_GETFD});
+                установка флага \texttt{FD\_CLOEXEC} на концы каналов &
+                \fn{check_std_fds}, \fn{set_cloexec} \\
+\hline
+\texttt{fork} & порождение дочернего процесса & \fn{spawn_slave} \\
+\hline
+\texttt{dup2} & перенаправление \texttt{stdin} ребёнка на канал, а \texttt{stdout}
+               "--- на файл & \fn{spawn_slave} \\
+\hline
+\texttt{execv} & замена образа дочернего процесса программой \texttt{slave} &
+                \fn{spawn_slave} \\
+\hline
+\texttt{sigaction} & игнорирование \texttt{SIGPIPE} в родителе: запись в канал без
+                    читателя возвращает \texttt{EPIPE}, а не убивает процесс &
+                    \fn{start_children} \\
+\hline
+\texttt{close} & закрытие ненужных концов каналов; закрытие пишущих концов для
+                передачи детям признака конца данных (EOF) &
+                \fn{close_fd}, \fn{finish_children} \\
+\hline
+\texttt{waitpid} & ожидание завершения детей и разбор их кода возврата &
+                  \fn{wait_child} \\
+\hline
+\texttt{\_exit} & завершение ребёнка при ошибке \texttt{dup2}/\texttt{execv} без
+                 сброса унаследованных буферов \texttt{stdio} & \fn{spawn_slave} \\*
+\hline
+\end{longtable}
+
+\subsection{Подготовка}
+Подготовку выполняет функция \fn{start_children}:
+\begin{enumerate}
+    \item \textbf{Проверка стандартных дескрипторов.} Если программа запущена с
+          закрытым \texttt{stdin} (\texttt{./master <\&-}), то \texttt{pipe()}
+          вернул бы свободный номер 0, и последующий \texttt{dup2} перепутал бы
+          дескрипторы. Поэтому сначала \fn{check_std_fds} с помощью
+          \texttt{fcntl(fd, F\_GETFD)} проверяет, что 0, 1 и 2 открыты.
+    \item \textbf{Чтение имён файлов} (\fn{read_filename}). Имена читаются по одному байту до
+          \texttt{\textbackslash n}. Так родитель забирает из \texttt{stdin} ровно
+          две строки, а остальные данные остаются в ядре для этапа пересылки.
+          Длина имени ограничена \texttt{PATH\_MAX}; завершающий
+          \texttt{\textbackslash r} отбрасывается.
+    \item \textbf{Открытие файлов} (\fn{open_output_file}) с флагами \texttt{O\_WRONLY},
+          \texttt{O\_CREAT}, \texttt{O\_TRUNC} и \texttt{O\_CLOEXEC}. Затем
+          \fn{is_same_regular_file} сравнивает пары
+          \texttt{(st\_dev, st\_ino)}: два ребёнка с независимыми
+          смещениями в одном обычном файле затирали бы данные друг друга.
+    \item \textbf{Создание каналов} (\fn{open_pipe}) и установка \texttt{FD\_CLOEXEC}
+          на оба их конца (\fn{set_cloexec}).
+\end{enumerate}
+
+\subsection{Порождение дочерних процессов}
+Каждый ребёнок запускается функцией \fn{spawn_slave}. После \texttt{fork} ребёнок получает копию всех дескрипторов родителя.
+\texttt{dup2} ставит нужный конец канала и файл на места 0 и 1, причём новый
+дескриптор флага \texttt{FD\_CLOEXEC} не наследует. Все остальные копии ядро
+закрывает автоматически при \texttt{execv}:
+
+\begin{lstlisting}[style=console]
+child1 after fork:   0=stdin 1=stdout 2=stderr 3=file1 4=file2 5=pipe1[0] 6=pipe1[1] 7=pipe2[0] 8=pipe2[1]
+after dup2:          0=pipe1[0] 1=file1 2=stderr   3..8 are copies with CLOEXEC
+after execv:         0=pipe1[0] 1=file1 2=stderr   (3..8 closed by the kernel)
+\end{lstlisting}
+
+Если бы \texttt{child1} сохранил копию \texttt{pipe2[1]},
+\texttt{child2} не получил бы конец данных, пока жив \texttt{child1}. Путь к
+программе \texttt{slave} строится от \texttt{argv[0]} (\fn{build_slave_path}),
+поэтому \texttt{master} можно запускать из любого каталога. После каждого
+\texttt{fork} родитель закрывает свои копии читающего конца канала и файла
+(\fn{close_fd} в \fn{start_children}).
+
+Обработчик \texttt{SIGPIPE} устанавливается после \texttt{fork}, так как
+диспозиция \texttt{SIG\_IGN} наследуется через \texttt{exec}, а детям нужно
+поведение по умолчанию.
+
+\subsection{Пересылка строк}
+Пересылку выполняет функция \fn{forward_lines}. Родитель читает \texttt{stdin}
+блоками по 4096 байт (константа \fn{kBlockSize}, чтение "--- \fn{read_retry}) и ищет в блоке символы
+\texttt{\textbackslash n} функцией \texttt{memchr}. Фрагмент до перевода строки
+включительно уходит в текущий канал (\fn{write_all}), после него получатель
+меняется: индекс получателя "--- номер строки по модулю \fn{kChildrenCount}. Номер
+строки увеличивается только при встрече \texttt{\textbackslash n}, поэтому
+строка, разрезанная границей блоков, целиком попадает в один канал:
+
+\begin{lstlisting}[style=console]
+block:  "abc\nde"  |  "f\nghi\n"
+         pipe1 p2      p2  pipe1
+\end{lstlisting}
+
+Так выполняется требование о строках \enquote{произвольной длины}: строка
+нигде не хранится целиком, и даже строка, не помещающаяся в оперативную
+память, обрабатывается с постоянным расходом памяти. Проверено на строке
+длиной 1~ГБ: пиковое потребление памяти родителя около 0{,}9~МБ.
+
+\subsection{Работа дочернего процесса}
+Функция \coderef{slave-main}{main} программы \texttt{slave} читает
+\texttt{stdin} блоками, удаляет гласные на месте (проверка символа "---
+\fn{is_vowel}), сдвигая остальные байты к началу буфера, и записывает результат
+в \texttt{stdout} функцией \fn{write_all}, которая повторяет \texttt{write}
+при частичной записи. Обработка побайтовая, поэтому место разреза строки
+родителем значения не имеет. \texttt{read} возвращает 0, когда все
+пишущие концы канала закрыты.
+
+\subsection{Завершение}
+Функция \fn{finish_children} закрывает \texttt{pipe1[1]} и \texttt{pipe2[1]},
+дети получают EOF и завершаются, после чего для каждого из них вызывается
+\fn{wait_child}, которая ожидает процесс через \texttt{waitpid} и разбирает его
+статус.
+Порядок важен: если ждать детей до закрытия каналов, возникнет взаимная
+блокировка "--- ребёнок ждёт конца данных, а родитель ждёт ребёнка.
+
+Все ресурсы (дескрипторы, идентификаторы процессов) хранятся в структуре
+\fn{child_t}, где значение $-1$ означает \enquote{не выделено}. Функция
+подготовки \fn{start_children} при ошибке просто возвращает код, а
+\fn{finish_children} всегда закрывает всё открытое и дожидается всех запущенных
+процессов; \coderef{master-main}{main} лишь вызывает эти этапы по очереди. Это позволяет
+обойтись без \texttt{goto} и корректно освобождать ресурсы на любом этапе,
+например если второй \texttt{fork} не удался, а первый ребёнок уже работает.
+
+\section{Обработка ошибок}
+Каждый системный вызов проверяется; вызовы \texttt{read}, \texttt{write},
+\texttt{open}, \texttt{waitpid}, прерванные сигналом (\texttt{EINTR}),
+повторяются (\fn{read_retry}, \fn{write_all}, \fn{open_output_file},
+\fn{wait_child}). Код завершения родителя "--- битовая маска, поэтому по нему видно
+все произошедшие ошибки одновременно:
+
+\begin{longtable}{|c|p{0.30\textwidth}|>{\raggedright\arraybackslash}p{0.50\textwidth}|}
+\hline
+\rowcolor{lightgray}
+\textbf{Бит} & \textbf{Константа} & \textbf{Значение} \\
+\hline
+\endhead
+1 & \fn{kErrInput} & ошибка чтения \texttt{stdin}, пустое или слишком
+                         длинное имя, один и тот же файл для обоих детей \\
+\hline
+2 & \fn{kErrSetup} & ошибка \texttt{open}, \texttt{pipe}, \texttt{fork},
+                         \texttt{sigaction}, закрыт стандартный дескриптор \\
+\hline
+4 & \fn{kErrChild1Write} & \texttt{child1} перестал читать \texttt{pipe1} \\
+\hline
+8 & \fn{kErrChild2Write} & \texttt{child2} перестал читать \texttt{pipe2} \\
+\hline
+16 & \fn{kErrChild1Status} & \texttt{child1} завершился с ошибкой или по сигналу \\
+\hline
+32 & \fn{kErrChild2Status} & \texttt{child2} завершился с ошибкой или по сигналу \\*
+\hline
+\end{longtable}
+
+Максимальное значение 63 не пересекается с кодами 126, 127 и $128+N$, которыми
+командная оболочка обозначает ошибки запуска и завершение по сигналу. Дочерний
+процесс завершается с кодом 126 (\fn{kChildSetupFailed}), если не удался
+\texttt{dup2}, и 127 (\fn{kChildExecFailed}), если не удался \texttt{execv};
+сама программа \texttt{slave} возвращает 1 (\fn{kSlaveReadFailed}) при ошибке
+чтения и 2 (\fn{kSlaveWriteFailed}) при ошибке записи. Родитель расшифровывает
+эти коды в сообщениях (\fn{wait_child}).
+
+Если ребёнок аварийно завершился, запись в его канал возвращает \texttt{EPIPE}:
+\fn{forward_lines} сообщает об этом, закрывает канал и продолжает пересылать
+строки второму ребёнку.
+
+\section{Демонстрация работы}
+Программа разрабатывалась на macOS; трассировка выполнена в контейнере Debian
+(ядро Linux 6.12, \texttt{gcc} 14.2, \texttt{strace} 6.13). Входные данные:
+
+\begin{lstlisting}[style=console]
+$ cat input.txt
+out1.txt
+out2.txt
+Hello World
+Operating Systems
+abcdefghij
+UNIX pipes
+$ ./master < input.txt; echo "exit=$?"
+exit=0
+$ cat out1.txt
+Hll Wrld
+bcdfghj
+$ cat out2.txt
+prtng Systms
+NX pps
+\end{lstlisting}
+
+\subsection{Трассировка системных вызовов}
+\begin{lstlisting}[style=console]
+strace -f -o trace.log -e trace=read,write,openat,pipe2,fcntl,clone,execve,\
+    dup3,close,wait4,rt_sigaction,exit_group ./master < input.txt
+\end{lstlisting}
+
+Фрагмент трассы (строки динамического загрузчика опущены, PID 532 "---
+\texttt{master}, 533 и 534 "--- дочерние процессы):
+
+\begin{lstlisting}[style=console]
+532   fcntl(0, F_GETFD)                 = 0
+532   fcntl(1, F_GETFD)                 = 0
+532   fcntl(2, F_GETFD)                 = 0
+532   read(0, "o", 1)                   = 1
+532   read(0, "u", 1)                   = 1
+...
+532   read(0, "\n", 1)                  = 1
+532   openat(AT_FDCWD, "out1.txt", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0644) = 3
+532   openat(AT_FDCWD, "out2.txt", O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, 0644) = 4
+532   pipe2([5, 6], 0)                  = 0
+532   fcntl(5, F_SETFD, FD_CLOEXEC)     = 0
+532   fcntl(6, F_SETFD, FD_CLOEXEC)     = 0
+532   pipe2([7, 8], 0)                  = 0
+...
+532   clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, ...) = 533
+532   close(5)                          = 0
+533   dup3(5, 0, 0)                     = 0
+532   close(3)                          = 0
+533   dup3(3, 1, 0)                     = 1
+533   execve("./slave", ["slave"], 0xffffc81fe8c8 /* 7 vars */) = 0
+532   clone(...)                        = 534
+532   close(7)                          = 0
+534   dup3(7, 0, 0)                     = 0
+532   close(4)                          = 0
+534   dup3(4, 1, 0)                     = 1
+532   rt_sigaction(SIGPIPE, {sa_handler=SIG_IGN, sa_mask=[], sa_flags=0}, NULL, 8) = 0
+534   execve("./slave", ["slave"], 0xffffc81fe8c8 /* 7 vars */) = 0
+532   read(0, "Hello World\nOperating Systems\nab"..., 4096) = 52
+532   write(6, "Hello World\n", 12)     = 12
+532   write(8, "Operating Systems\n", 18) = 18
+532   write(6, "abcdefghij\n", 11)      = 11
+532   write(8, "UNIX pipes\n", 11)      = 11
+532   read(0, "", 4096)                 = 0
+532   close(6)                          = 0
+532   close(8)                          = 0
+532   wait4(533,  <unfinished ...>
+533   read(0, "Hello World\nabcdefghij\n", 4096) = 23
+533   write(1, "Hll Wrld\nbcdfghj\n", 17) = 17
+534   read(0, "Operating Systems\nUNIX pipes\n", 4096) = 29
+534   write(1, "prtng Systms\nNX pps\n", 20) = 20
+533   read(0, "", 4096)                 = 0
+533   exit_group(0)                     = ?
+532   <... wait4 resumed>[{WIFEXITED(s) && WEXITSTATUS(s) == 0}], 0, NULL) = 533
+534   read(0, "", 4096)                 = 0
+534   exit_group(0)                     = ?
+532   wait4(534, [{WIFEXITED(s) && WEXITSTATUS(s) == 0}], 0, NULL) = 534
+532   exit_group(0)                     = ?
+\end{lstlisting}
+
+По трассе видны все этапы работы:
+\begin{itemize}
+    \item имена файлов читаются по одному байту (\fn{read_filename}), а строки "---
+          одним блоком (\texttt{read(0, ..., 4096) = 52}) в \fn{forward_lines};
+    \item glibc реализует \texttt{pipe()} через \texttt{pipe2(fds, 0)},
+          \texttt{fork()} "--- через \texttt{clone} с флагом \texttt{SIGCHLD}, а
+          \texttt{dup2()} "--- через \texttt{dup3};
+    \item в ребёнке (\fn{spawn_slave}) \texttt{dup3(5, 0)} подставляет \texttt{pipe1[0]} на место
+          \texttt{stdin}, \texttt{dup3(3, 1)} "--- файл на место \texttt{stdout};
+    \item блок из 52 байт разрезается на четыре строки, которые поочерёдно
+          уходят в дескрипторы 6 (\texttt{pipe1}) и 8 (\texttt{pipe2});
+    \item каждый ребёнок читает обе свои строки одним вызовом \texttt{read}
+          и пишет результат одним \texttt{write} в дескриптор 1, то есть в файл;
+    \item после \texttt{close(6)} и \texttt{close(8)} дети получают
+          \texttt{read(...) = 0} и завершаются, а родитель собирает их статусы
+          через \texttt{wait4} (\fn{finish_children}). Строки \texttt{<unfinished ...>} и
+          \texttt{<... resumed>} показывают, что процессы выполняются
+          параллельно.
+\end{itemize}
+
+\subsection{Сводная статистика}
+\begin{lstlisting}[style=console]
+strace -f -c ./master < input.txt
+\end{lstlisting}
+
+\begin{lstlisting}[style=console]
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 70.17    0.001508         754         2           wait4
+  9.35    0.000201           9        21           mmap
+  7.21    0.000155          12        12           mprotect
+  3.44    0.000074           9         8           munmap
+  2.14    0.000046           1        27           read
+  2.14    0.000046           7         6           write
+  ...
+  0.00    0.000000           0         4           dup3
+  0.00    0.000000           0        11           fcntl
+  0.00    0.000000           0         2           pipe2
+  0.00    0.000000           0         1           rt_sigaction
+  0.00    0.000000           0         2           clone
+  0.00    0.000000           0         3           execve
+------ ----------- ----------- --------- --------- ----------------
+100.00    0.002149          13       156         6 total
+\end{lstlisting}
+
+Основное время уходит на \texttt{wait4}: родитель блокируется в нём, пока дети
+обрабатывают данные. Три вызова \texttt{execve} "--- запуск \texttt{master} и
+двух экземпляров \texttt{slave}; \texttt{mmap}, \texttt{mprotect} и
+\texttt{munmap} выполняет динамический загрузчик при старте каждого из трёх
+процессов.
+
+\section{Итог работы}
+В ходе лабораторной работы была реализована программа из двух
+процессов-обработчиков и управляющего процесса, взаимодействующих через
+неименованные каналы. Получены практические навыки работы с системными вызовами
+\texttt{fork}, \texttt{execv}, \texttt{dup2}, \texttt{pipe}, \texttt{waitpid}
+и \texttt{sigaction}.
+
+Основные выводы:
+\begin{itemize}
+    \item каждый лишний открытый конец канала "--- потенциальная взаимоблокировка,
+          поэтому их удобно закрывать автоматически флагом \texttt{FD\_CLOEXEC};
+    \item потоковая обработка блоками фиксированного размера позволяет работать
+          со строками любой длины при постоянном расходе памяти;
+    \item игнорирование \texttt{SIGPIPE} превращает аварию дочернего процесса в
+          обрабатываемую ошибку \texttt{EPIPE};
+    \item порядок завершения важен: сначала закрыть пишущие концы каналов, затем
+          ожидать дочерние процессы.
+\end{itemize}
+
+\newpage
+\phantomsection
+\addcontentsline{toc}{section}{Приложение А. Исходный код программы}
+\begin{center}
+    {\large\bfseries ПРИЛОЖЕНИЕ А}\\[0.2cm]
+    {\bfseries Исходный код программы}
+\end{center}
+
+Исходный код также доступен в
+\MYhref{https://github.com/evdakCherpak/os_mai_labs}{репозитории на GitHub}.
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.1. master.c}
+\subsection*{А.1. master.c}
+\lstinputlisting[name=master.c]{../src/master.c}
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.2. slave.c}
+\subsection*{А.2. slave.c}
+\lstinputlisting[name=slave.c]{../src/slave.c}
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.3. common.h}
+\subsection*{А.3. common.h}
+\lstinputlisting[name=common.h]{../src/common.h}
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.4. common.c}
+\subsection*{А.4. common.c}
+\lstinputlisting[name=common.c]{../src/common.c}
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.5. Makefile}
+\subsection*{А.5. Makefile}
+% escapechar=@ from log-style would break on $@ in the Makefile
+\lstinputlisting[name=Makefile,language=make,escapechar={}]{../Makefile}
+
+\end{document}
