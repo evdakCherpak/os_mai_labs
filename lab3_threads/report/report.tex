@@ -1,0 +1,648 @@
+\documentclass[12pt,a4paper]{article}
+
+\makeatletter
+\input{log-style}
+\makeatother
+
+% Style for terminal output and traces: no C highlighting, no numbers.
+\lstdefinestyle{console}{
+  language={},
+  numbers=none,
+  frame=single,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  basicstyle=\footnotesize\ttfamily,
+  identifierstyle=\color{black},
+}
+
+% listings cannot read multibyte UTF-8: listingsutf8 recodes the source files
+% (Cyrillic comments) to KOI8-R on the fly.
+\usepackage{listingsutf8}
+\lstset{inputencoding=utf8/koi8-r}
+
+\hypersetup{hidelinks}
+
+% Monospaced identifiers cannot be hyphenated; let TeX stretch the spaces
+% instead of pushing them into the margin.
+\setlength{\emergencystretch}{3em}
+
+\usepackage{caption}
+\usepackage{needspace}
+\usepackage{float}
+\usepackage{multirow}
+\captionsetup{font=small}
+
+% Every line number of a source listing becomes a link target "<file>.<line>".
+\newcommand{\lstlinetarget}[1]{\raisebox{\baselineskip}[0pt][0pt]{\hypertarget{\lstname.#1}{}}#1}
+\lstset{numberstyle=\footnotesize\lstlinetarget}
+
+% Code references: \deffn{key}{file}{line} declares where a definition starts,
+% \fn{key} prints the key as a link, \coderef{key}{text} prints custom text.
+% The line numbers below must match the sources in ../src.
+\newcommand{\deffn}[3]{\expandafter\def\csname cref@#1\endcsname{#2.#3}}
+\newcommand{\coderef}[2]{%
+  \ifcsname cref@#1\endcsname
+    \hyperlink{\csname cref@#1\endcsname}{\textcolor{blue}{\texttt{#2}}}%
+  \else
+    \errmessage{Unknown code reference: #1}%
+  \fi}
+\newcommand{\fn}[1]{\coderef{#1}{\detokenize{#1}}}
+
+\deffn{main.c}{main.c}{1}
+
+\deffn{morph.c}{morph.c}{1}
+
+\deffn{morph.h}{morph.h}{1}
+
+\deffn{matrix.c}{matrix.c}{1}
+
+\deffn{matrix.h}{matrix.h}{1}
+
+\deffn{Makefile}{Makefile}{1}
+
+
+\deffn{kMaxThreads}{main.c}{21}
+\deffn{parse_options}{main.c}{92}
+\deffn{load_matrix}{main.c}{166}
+\deffn{is_same_file}{main.c}{220}
+\deffn{filter}{main.c}{251}
+
+\deffn{matrix_t}{matrix.h}{9}
+\deffn{matrix_alloc}{matrix.c}{16}
+\deffn{matrix_read}{matrix.c}{79}
+\deffn{matrix_write}{matrix.c}{122}
+
+\deffn{barrier_t}{morph.c}{11}
+\deffn{kChunksPerThread}{morph.c}{40}
+\deffn{morph_task_t}{morph.c}{45}
+\deffn{barrier_wait}{morph.c}{90}
+\deffn{barrier_break}{morph.c}{111}
+\deffn{window_min}{morph.c}{118}
+\deffn{window_max}{morph.c}{131}
+\deffn{filter_rows}{morph.c}{145}
+\deffn{filter_both}{morph.c}{171}
+\deffn{run_iteration}{morph.c}{178}
+\deffn{worker_main}{morph.c}{201}
+\deffn{run_workers}{morph.c}{218}
+\deffn{morph_apply}{morph.c}{264}
+
+\begin{document}
+
+\begin{titlepage}
+\begin{center}
+    \includegraphics[width=\textwidth]{mai_header.jpg}
+
+    \vspace{1cm}
+    Министерство науки и высшего образования Российской Федерации\\
+    Федеральное государственное бюджетное образовательное учреждение высшего образования\\
+    \textbf{Московский авиационный институт}\\
+    (Национальный исследовательский университет)
+
+    \vspace{1.5cm}
+    Институт № 8 \enquote{Компьютерные науки и прикладная математика}\\
+    Кафедра 806
+
+    \vspace{2cm}
+    {\large\textbf{Отчёт по лабораторной работе №3}}\\[0.3cm]
+    {\textbf{Дисциплина}}: \enquote{Операционные системы и архитектура компьютера}\\[0.3cm]
+    {\textbf{Тема}}: \enquote{Работа с потоками}\\[0.3cm]
+    {\textbf{Вариант}}: 12
+\end{center}
+
+\vspace{2cm}
+\begin{flushright}
+    {\textbf{Выполнил:}}\\
+    студент группы М8О-206БВ-25\\
+    Ширанков М.С.\\
+
+    {\textbf{Проверил:}}\\
+    Ассистент Центра ТОП-ИТ\\
+    Ефимов Д.А.
+\end{flushright}
+
+\vfill
+\begin{center}
+    Москва 2026
+\end{center}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section{Цель работы}
+Приобрести практические навыки:
+\begin{itemize}
+    \item управления потоками в ОС: создания потоков (\texttt{pthread\_create}),
+          ожидания их завершения (\texttt{pthread\_join}), ограничения их числа;
+    \item обеспечения синхронизации между потоками: мьютексов, условных
+          переменных, барьеров и атомарных операций.
+\end{itemize}
+
+\section{Задание}
+Составить программу на языке Си, обрабатывающую данные в многопоточном режиме.
+При обработке использовать стандартные средства создания потоков операционной
+системы. Ограничение максимального количества потоков, работающих в один момент
+времени, должно задаваться ключом запуска программы. Необходимо уметь
+продемонстрировать количество потоков, используемое программой, стандартными
+средствами операционной системы. В отчёте привести исследование зависимости
+ускорения и эффективности алгоритма от входных данных и количества потоков и
+объяснить полученные результаты.
+
+\textbf{Вариант 12:} наложить $K$ раз фильтры эрозии и наращивания на матрицу,
+состоящую из вещественных чисел. На выходе получается две результирующие матрицы.
+
+\section{Ход работы}
+\subsection{Структура программы}
+Программа \texttt{morph} состоит из трёх модулей (полный исходный код приведён
+в приложении~А):
+\begin{itemize}
+    \item \fn{main.c} "--- разбор ключей запуска, ввод и вывод матриц, замер
+          времени;
+    \item \fn{matrix.c}, \fn{matrix.h} "--- матрица \fn{matrix_t}: выделение памяти,
+          чтение и запись в текстовом формате, генерация случайной матрицы;
+    \item \fn{morph.c}, \fn{morph.h} "--- многопоточное применение фильтров:
+          потоки, барьер, распределение работы.
+\end{itemize}
+
+Сборка выполняется по \fn{Makefile} из корня лабораторной работы, замеры для
+раздела исследования "--- скриптом \texttt{bench/bench.py}:
+\begin{lstlisting}[style=console]
+make
+./morph -t 4 -k 3 -w 5 -i input.txt -e eroded.txt -d dilated.txt
+python3 bench/bench.py
+\end{lstlisting}
+
+\needspace{18\baselineskip}
+\subsection{Ключи запуска}
+Формат матрицы: два целых числа "--- количество строк и столбцов, затем все
+элементы по строкам через любые пробельные символы (пробелы, табуляции, перевод строки и т.д.). В этом же формате
+выводятся результаты.
+
+\begin{longtable}{|>{\raggedright\arraybackslash}p{0.19\textwidth}|>{\raggedright\arraybackslash}p{0.71\textwidth}|}
+\hline
+\rowcolor{lightgray}
+\textbf{Ключ} & \textbf{Назначение} \\
+\hline
+\endhead
+\texttt{-t THREADS} & \textbf{обязательный}: максимальное число потоков, работающих
+                      одновременно, включая главный (1--\fn{kMaxThreads}) \\
+\hline
+\texttt{-k K} & сколько раз применить каждый фильтр (по умолчанию 1) \\
+\hline
+\texttt{-w WINDOW} & нечётная сторона квадратного окна (по умолчанию 3) \\
+\hline
+\texttt{-i FILE} & файл с матрицей; без ключа матрица читается из \texttt{stdin} \\
+\hline
+\texttt{-g RxC} & сгенерировать случайную матрицу $R \times C$ вместо чтения \\
+\hline
+\texttt{-s SEED} & зерно генератора для \texttt{-g} (по умолчанию 1) \\
+\hline
+\texttt{-e FILE},\newline\texttt{-d FILE} & файлы для результата эрозии и наращивания;
+                       без ключа результат выводится в \texttt{stdout} \\
+\hline
+\texttt{-S} & статическое распределение строк между потоками
+              (по умолчанию "--- динамическое, см. ниже) \\
+\hline
+\texttt{-q} & не выводить результаты, для которых не задан файл \\
+\hline
+\texttt{-v} & вывести в \texttt{stderr} PID, число потоков и время фильтрации \\*
+\hline
+\end{longtable}
+
+\subsection{Алгоритм}
+Эрозия и наращивание "--- операции математической морфологии. Для матрицы $A$
+размера $N \times M$ и квадратного окна стороны $w = 2r + 1$:
+\[
+    (A \ominus W)_{ij} = \min_{\substack{|a| \le r,\ |b| \le r \\ 0 \le i+a < N,\ 0 \le j+b < M}} A_{i+a,\,j+b},
+    \qquad
+    (A \oplus W)_{ij} = \max_{\substack{|a| \le r,\ |b| \le r \\ 0 \le i+a < N,\ 0 \le j+b < M}} A_{i+a,\,j+b}.
+\]
+У края матрицы окно обрезается (\fn{filter_rows}): учитываются только
+существующие элементы. Это равносильно дополнению матрицы значением $+\infty$
+для эрозии и $-\infty$ для наращивания, поэтому края не искажаются.
+
+Фильтры применяются $K$ раз: $E_0 = D_0 = A$, $E_k = E_{k-1} \ominus W$,
+$D_k = D_{k-1} \oplus W$; результат "--- $E_K$ и $D_K$. Минимум и максимум по окну
+считаются по определению (\fn{window_min}, \fn{window_max}), поэтому трудоёмкость
+равна $\Theta(K \cdot N \cdot M \cdot w^2)$ сравнений на каждый фильтр, а размер окна
+напрямую управляет объёмом вычислений на один элемент.
+
+\subsection{Распараллеливание}
+Внутри одной итерации каждый элемент результата зависит только от матрицы
+предыдущей итерации, поэтому все элементы можно считать независимо. Матрица
+делится между потоками по строкам; каждую строку результата записывает ровно
+один поток, и для записи блокировки не нужны. Обе цепочки, эрозия и наращивание,
+обрабатываются одними и теми же потоками: поток, взявший строки, считает в них
+оба фильтра.
+
+\textbf{Двойная буферизация.} Для каждого фильтра есть два буфера: итерация $i$
+читает буфер итерации $i-1$ и пишет в \texttt{out[i \% 2]} (\fn{morph_task_t},
+\fn{filter_both}).
+Первая итерация читает исходную матрицу напрямую, а буферы назначаются так, чтобы
+последняя, $K$-я, запись попала сразу в выходную матрицу (\fn{morph_apply}).
+Копирования между итерациями нет.
+
+\textbf{Барьер.} Итерации зависят друг от друга, и опасностей две:
+\begin{itemize}
+    \item \enquote{чтение до записи}: строки на границе участка читают строки
+          соседнего участка, и итерация $i+1$ не может начаться, пока сосед не
+          дописал их на итерации $i$;
+    \item \enquote{запись до окончания чтения}: итерация $i+1$ пишет в буфер
+          \texttt{out[(i+1) \% 2]}, который на итерации $i$ ещё читают другие
+          потоки как результат итерации $i-1$.
+\end{itemize}
+Обе снимает один барьер между итерациями: никакой поток не начинает итерацию
+$i+1$, пока все не закончили итерацию $i$. После последней итерации барьер не
+нужен "--- его роль играет \texttt{pthread\_join}.
+
+В macOS нет \texttt{pthread\_barrier\_t}, поэтому барьер \fn{barrier_t} реализован
+на мьютексе и условной переменной (\fn{barrier_wait}). Поток увеличивает счётчик
+пришедших; последний обнуляет его, увеличивает номер поколения
+(\texttt{generation}) и будит остальных через \texttt{pthread\_cond\_broadcast}.
+Остальные ждут в цикле, пока не сменится поколение. Номер поколения нужен по двум
+причинам: \texttt{pthread\_cond\_wait} допускает ложные пробуждения, а поток,
+быстро прошедший барьер, может прийти к нему снова раньше, чем проснулись
+остальные, "--- проверка счётчика вместо поколения в этом случае сломалась бы.
+
+\textbf{Ограничение числа потоков.} Ключ \texttt{-t} задаёт число $T$; создаётся
+$\min(T, N)$ вычисляющих потоков, так как делить работу мельче строки нет смысла.
+Главный поток не простаивает в \texttt{pthread\_join}, а работает как поток номер 0
+(\fn{run_workers}), поэтому в процессе ровно $\min(T, N)$ потоков. Потоки создаются
+один раз и живут все $K$ итераций; создавать их заново на каждой итерации было бы
+дороже.
+
+Перед вычислениями все потоки ждут на стартовом барьере (\fn{worker_main}). Если
+\texttt{pthread\_create} не удался, уже запущенные потоки ждали бы на барьере
+вечно: число участников не набралось бы. Поэтому барьер можно
+\enquote{сломать} (\fn{barrier_break}): ожидающие просыпаются, получают $-1$ и
+завершаются, а главный поток дожидается их и сообщает об ошибке.
+
+\textbf{Распределение строк.} Реализованы две стратегии:
+\begin{itemize}
+    \item \textbf{статическая} (ключ \texttt{-S}): поток $t$ из $T$ получает
+          полосу строк $[\lfloor tN/T \rfloor, \lfloor (t+1)N/T \rfloor)$; полосы
+          отличаются по высоте не больше чем на одну строку;
+    \item \textbf{динамическая} (по умолчанию): матрица делится на блоки по
+          $\lceil N / (16 T) \rceil$ строк (\fn{kChunksPerThread}), а поток, закончив
+          блок, берёт номер следующего атомарной операцией
+          \texttt{atomic\_fetch\_add} над общим счётчиком. Быстрый поток успевает
+          обработать больше блоков, чем медленный.
+\end{itemize}
+Счётчик блоков после итерации нужно обнулить, но сделать это сразу нельзя: другие
+потоки ещё могут обращаться к нему. Поэтому счётчиков два, как и буферов:
+итерация $i$ раздаёт блоки из \texttt{next\_chunk[i \% 2]}, а поток 0 в её начале
+обнуляет \texttt{next\_chunk[(i+1) \% 2]} (\fn{run_iteration}). Этот счётчик использовался на
+итерации $i-1$, и все потоки уже прошли барьер после неё; обнуление станет
+видно остальным через барьер после итерации $i$. Порядок обращений к
+счётчику обеспечивает барьер на мьютексе, поэтому для самой атомарной операции
+достаточно \texttt{memory\_order\_relaxed}.
+
+\needspace{10\baselineskip}
+\section{Используемые системные вызовы и функции}
+\begin{longtable}{|>{\raggedright\arraybackslash}p{0.27\textwidth}|>{\raggedright\arraybackslash}p{0.42\textwidth}|>{\raggedright\arraybackslash}p{0.21\textwidth}|}
+\hline
+\rowcolor{lightgray}
+\textbf{Вызов} & \textbf{Назначение в программе} & \textbf{Где в коде} \\
+\hline
+\endhead
+\texttt{pthread\_create} & создание вычисляющих потоков & \fn{run_workers} \\
+\hline
+\texttt{pthread\_join} & ожидание завершения потоков и освобождение их ресурсов &
+                         \fn{run_workers} \\
+\hline
+\texttt{pthread\_mutex\_init}, \texttt{\_lock}, \texttt{\_unlock}, \texttt{\_destroy} &
+    защита состояния барьера & \fn{barrier_t}, \fn{barrier_wait} \\
+\hline
+\texttt{pthread\_cond\_init}, \texttt{\_wait}, \texttt{\_broadcast}, \texttt{\_destroy} &
+    ожидание остальных потоков на барьере и их пробуждение &
+    \fn{barrier_wait}, \fn{barrier_break} \\
+\hline
+\texttt{atomic\_fetch\_add}, \texttt{atomic\_store} & выдача блоков строк при
+    динамическом распределении & \fn{run_iteration} \\
+\hline
+\texttt{clock\_gettime} & замер времени фильтрации по монотонным часам
+                          (\texttt{CLOCK\_MONOTONIC}) & \fn{filter} \\
+\hline
+\texttt{malloc}, \texttt{free} & память под матрицы и промежуточные буферы &
+                                 \fn{matrix_alloc}, \fn{morph_apply} \\
+\hline
+\texttt{fopen}, \texttt{fscanf}, \texttt{fprintf}, \texttt{fclose} & чтение
+    исходной и запись результирующих матриц & \fn{load_matrix},
+    \fn{matrix_read}, \fn{matrix_write} \\
+\hline
+\texttt{fstat} & проверка, что результаты не записываются в один файл &
+                 \fn{is_same_file} \\
+\hline
+\texttt{getopt} & разбор ключей запуска & \fn{parse_options} \\*
+\hline
+\end{longtable}
+
+На уровне ядра \texttt{pthread\_create} в Linux выполняется системным вызовом
+\texttt{clone3} с флагами \texttt{CLONE\_VM}, \texttt{CLONE\_THREAD} и др.:
+новый поток разделяет с создателем адресное пространство, дескрипторы и
+обработчики сигналов. Ожидание на мьютексе и условной переменной при
+конфликте превращается в вызов \texttt{futex}; без конфликта мьютекс
+захватывается атомарной операцией в пространстве пользователя, без системного
+вызова.
+
+\section{Демонстрация работы}
+\subsection{Пример фильтрации}
+Матрица $4 \times 5$, окно $3 \times 3$. При $K = 1$ оба результата
+выводятся в \texttt{stdout} (сначала эрозия, затем наращивание), при $K = 2$
+"--- в файлы:
+
+\begin{lstlisting}[style=console]
+$ cat input.txt
+4 5
+1 9 2 8 3
+7 0.5 6 4 5
+2 3 -1 9 6
+8 4 7 1 2
+$ ./morph -t 2 -w 3 -k 1 -i input.txt
+4 5
+0.5 0.5 0.5 2 3
+0.5 -1 -1 -1 3
+0.5 -1 -1 -1 1
+2 -1 -1 -1 1
+4 5
+9 9 9 8 8
+9 9 9 9 9
+8 8 9 9 9
+8 8 9 9 9
+$ ./morph -t 2 -w 3 -k 2 -i input.txt -e eroded.txt -d dilated.txt -v
+pid 71752: filtering 4x5...
+matrix=4x5 window=3 iterations=2 threads=2 split=dynamic time_ms=0.084
+$ cat eroded.txt dilated.txt
+4 5
+-1 -1 -1 -1 -1
+-1 -1 -1 -1 -1
+-1 -1 -1 -1 -1
+-1 -1 -1 -1 -1
+4 5
+9 9 9 9 9
+9 9 9 9 9
+9 9 9 9 9
+8 9 9 9 9
+\end{lstlisting}
+
+Например, элемент $(0, 0)$ после эрозии равен $\min(1, 9, 7, 0{,}5) = 0{,}5$:
+окно в углу обрезано до $2 \times 2$. Эрозия \enquote{растягивает} минимумы, а
+наращивание "--- максимумы: каждый проход сдвигает их границу на $r = 1$
+элемент. От минимума $-1$ в позиции $(2, 2)$ до любого элемента матрицы не
+больше двух шагов по строкам и столбцам, поэтому за два прохода он заполнил
+всю матрицу. А до элемента $(3, 0)$ от обеих девяток, $(0, 1)$ и $(2, 3)$,
+три шага, поэтому после наращивания там осталось 8.
+
+\subsection{Количество потоков средствами ОС}
+Программа разрабатывалась на macOS (Apple M1). Запускаем долгую фильтрацию с
+ограничением в 6 потоков и смотрим на процесс из другого терминала. Утилита
+\texttt{ps} с ключом \texttt{-M} выводит по строке на каждый поток, а
+\texttt{top} "--- число потоков в столбце \texttt{\#TH}:
+\begin{lstlisting}[style=console]
+$ ./morph -t 6 -g 3000x3000 -w 9 -k 30 -q -v &
+pid 74665: filtering 3000x3000...
+$ ps -M -p 74665
+USER       PID   TT   %CPU STAT PRI     STIME     UTIME COMMAND
+eblackbu 74665   ??   66.3 R    31T   0:00.04   0:00.79 ./morph -t 6 -g 3000x3000 -w 9 -k 30 -q -v
+         74665        70.0 R    31T   0:00.04   0:00.80
+         74665        67.9 R    31T   0:00.03   0:00.77
+         74665        66.8 R    31T   0:00.03   0:00.77
+         74665        65.7 R    31T   0:00.03   0:00.75
+         74665        67.5 R    31T   0:00.03   0:00.78
+$ top -l 1 -pid 74665 -stats pid,command,cpu,threads
+PID    COMMAND %CPU #TH
+74665  morph   0.0  6/6
+\end{lstlisting}
+Потоков ровно шесть: главный и пять созданных, все в состоянии \texttt{R}
+(выполняется) с почти одинаковым процессорным временем \texttt{UTIME} "---
+работа распределена равномерно. (\texttt{top -l 1} делает один снимок, поэтому
+загрузка в нём не измеряется и показана как 0.)
+
+То же в Linux (контейнер Debian, ядро 6.12, \texttt{gcc}~14.2). Здесь каждый
+поток "--- отдельная задача ядра со своим идентификатором \texttt{SPID}
+(\texttt{TID}):
+\begin{lstlisting}[style=console]
+$ ps -T -p 611
+  PID  SPID TTY          TIME CMD
+  611   611 ?        00:00:01 morph
+  611   613 ?        00:00:01 morph
+  611   614 ?        00:00:01 morph
+  611   615 ?        00:00:01 morph
+  611   616 ?        00:00:01 morph
+  611   617 ?        00:00:01 morph
+$ ps -o pid,nlwp,cmd -p 611
+  PID NLWP CMD
+  611    6 ./morph -t 6 -g 3000x3000 -w 9 -k 30 -q -v
+$ grep Threads /proc/611/status
+Threads:	6
+$ ls /proc/611/task
+611  613  614  615  616  617
+\end{lstlisting}
+Также число потоков видно в \texttt{top -H} и \texttt{htop}. Если строк в
+матрице меньше, чем задано \texttt{-t}, потоков создаётся по числу строк.
+
+\subsection{Трассировка системных вызовов}
+\begin{lstlisting}[style=console]
+strace -f -e trace=clone3,futex,exit,exit_group ./morph -t 3 -g 600x600 -k 2 -q
+\end{lstlisting}
+Трасса (PID 625 "--- главный поток, 626 и 627 "--- созданные; длинные
+аргументы сокращены):
+\begin{lstlisting}[style=console]
+625   clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|
+              CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,
+              ..., stack_size=0x80ea60, ...} => {parent_tid=[626]}, 88) = 626
+626   futex(0xffffc4d83010, FUTEX_WAIT_BITSET_PRIVATE|..., 0, ...) <unfinished ...>
+625   clone3({flags=...|CLONE_THREAD|..., ...} => {parent_tid=[627]}, 88) = 627
+625   futex(0xffffc4d83010, FUTEX_WAIT_BITSET_PRIVATE|..., 0, ...) <unfinished ...>
+627   futex(0xffffc4d83010, FUTEX_WAKE_PRIVATE, 2147483647) = 2
+625   <... futex resumed>)              = 0
+626   <... futex resumed>)              = 0
+625   futex(0xffffc4d82fc0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+626   futex(0xffffc4d82fc0, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+...
+627   futex(0xffffc4d83014, FUTEX_WAIT_BITSET_PRIVATE|..., 0, ...) <unfinished ...>
+626   futex(0xffffc4d83014, FUTEX_WAIT_BITSET_PRIVATE|..., 0, ...) <unfinished ...>
+625   futex(0xffffc4d83014, FUTEX_WAKE_PRIVATE, 2147483647) = 2
+...
+625   futex(0xffff84b9f250, FUTEX_WAIT_BITSET|..., 626, ...) <unfinished ...>
+627   exit(0)                           = ?
+626   exit(0 <unfinished ...>
+625   <... futex resumed>)              = 0
+625   exit_group(0)                     = ?
+\end{lstlisting}
+
+По трассе видно:
+\begin{itemize}
+    \item \texttt{pthread\_create} "--- это \texttt{clone3} с флагами
+          \texttt{CLONE\_VM} (общая память), \texttt{CLONE\_FILES} (общие
+          дескрипторы), \texttt{CLONE\_SIGHAND} и \texttt{CLONE\_THREAD} (тот же
+          процесс), под стек нового потока выделено около 8~МБ
+          (\texttt{stack\_size=0x80ea60});
+    \item барьер проходится дважды: стартовый и между двумя итерациями. На
+          первом последним пришёл поток 627, на втором "--- главный поток 625.
+          Пришедшие раньше спят в \texttt{FUTEX\_WAIT} на условной переменной
+          (адреса \texttt{...3010} и \texttt{...3014} "--- её внутренний счётчик),
+          последний будит всех одним \texttt{FUTEX\_WAKE} с числом
+          $2^{31}-1$ (\texttt{pthread\_cond\_broadcast}), ядро сообщает, что
+          проснулись два потока;
+    \item проснувшиеся потоки одновременно захватывают мьютекс барьера
+          (\texttt{...2fc0}), отсюда короткие \texttt{FUTEX\_WAKE} на нём.
+          Без конфликта мьютекс системных вызовов не делает "--- в трассе нет
+          захватов при чтении счётчика блоков, он атомарный;
+    \item \texttt{pthread\_join} ждёт поток на \texttt{futex} по адресу его
+          идентификатора: ядро обнуляет его и будит ожидающего при выходе потока
+          (флаг \texttt{CLONE\_CHILD\_CLEARTID});
+    \item созданные потоки завершаются вызовом \texttt{exit}, который
+          завершает только поток, а главный "--- \texttt{exit\_group}, завершающим
+          весь процесс.
+\end{itemize}
+
+Сводная статистика \texttt{strace -f -c} для $1000 \times 1000$, $K = 10$, 4
+потока: 93 вызова \texttt{futex} (99\% системного времени, это время ожидания
+на барьере) и 3 вызова \texttt{clone3}. Вызовов на элемент матрицы нет совсем:
+вся фильтрация выполняется в пространстве пользователя, ядро участвует только в
+создании потоков и в их ожидании.
+
+
+\section{Исследование ускорения и эффективности}
+% Earlier longtables have no captions but still advance the counter.
+\setcounter{table}{0}
+Ускорение и эффективность на $p$ потоках:
+\[
+    S_p = \frac{T_1}{T_p}, \qquad E_p = \frac{S_p}{p},
+\]
+где $T_p$ "--- время фильтрации на $p$ потоках (включая создание и завершение
+потоков), $T_1$ "--- время на одном потоке.
+
+Замеры выполнены на MacBook Air (Apple M1: 4 производительных ядра и
+4 энергоэффективных, примерно в 2--3 раза более медленных). Скрипт
+\texttt{bench/bench.py} запускает каждую конфигурацию 9 раз в случайном
+порядке и берёт медиану времени; результаты сохраняются в
+\texttt{bench/results/*.csv}. Сводная таблица по этим результатам:
+
+\begin{table}[H]
+\centering
+\caption{Время на одном потоке, ускорение и эффективность}
+\label{tab:speedup}
+\begin{tabular}{|c|c|r|c|c|c|c||c|c|}
+\hline
+\rowcolor{lightgray}
+\textbf{Параметры} & \textbf{Распр.} & \textbf{$T_1$, мс} & \textbf{$S_2$} & \textbf{$S_4$} &
+\textbf{$S_8$} & \textbf{$S_{16}$} & \textbf{$E_4$} & \textbf{$E_8$} \\
+\hline
+\multicolumn{9}{|l|}{\textit{Размер матрицы $N \times N$, окно $3 \times 3$, $K = 10$}} \\
+\hline
+\multirow{2}{*}{$N = 50$} & стат. & 0{,}52 & 1{,}34 & 1{,}66 & 0{,}94 & 0{,}57 & 0{,}41 & 0{,}12 \\
+ & дин. & 0{,}52 & 1{,}49 & 1{,}59 & 0{,}78 & 0{,}49 & 0{,}40 & 0{,}10 \\
+\hline
+\multirow{2}{*}{$N = 100$} & стат. & 2{,}09 & 1{,}77 & 2{,}57 & 2{,}18 & 1{,}91 & 0{,}64 & 0{,}27 \\
+ & дин. & 2{,}09 & 1{,}78 & 2{,}91 & 2{,}19 & 1{,}65 & 0{,}73 & 0{,}27 \\
+\hline
+\multirow{2}{*}{$N = 200$} & стат. & 8{,}35 & 1{,}93 & 3{,}46 & 4{,}05 & 3{,}50 & 0{,}86 & 0{,}51 \\
+ & дин. & 8{,}35 & 1{,}94 & 3{,}55 & 4{,}14 & 3{,}33 & 0{,}89 & 0{,}52 \\
+\hline
+\multirow{2}{*}{$N = 500$} & стат. & 52{,}1 & 1{,}98 & 3{,}86 & 4{,}79 & 4{,}90 & 0{,}96 & 0{,}60 \\
+ & дин. & 52{,}2 & 1{,}94 & 3{,}84 & 5{,}62 & 5{,}43 & 0{,}96 & 0{,}70 \\
+\hline
+\multirow{2}{*}{$N = 1000$} & стат. & 210 & 1{,}99 & 3{,}86 & 5{,}26 & 5{,}11 & 0{,}96 & 0{,}66 \\
+ & дин. & 210 & 1{,}96 & 3{,}85 & 5{,}74 & 5{,}91 & 0{,}96 & 0{,}72 \\
+\hline
+\multirow{2}{*}{$N = 2000$} & стат. & 846 & 1{,}99 & 3{,}81 & 4{,}64 & 4{,}83 & 0{,}95 & 0{,}58 \\
+ & дин. & 845 & 1{,}95 & 3{,}76 & 5{,}40 & 5{,}90 & 0{,}94 & 0{,}68 \\
+\hline
+\multicolumn{9}{|l|}{\textit{Размер окна $w$, матрица $1000 \times 1000$, $K = 4$}} \\
+\hline
+\multirow{2}{*}{$w = 1$} & стат. & 20{,}2 & 1{,}85 & 3{,}28 & 2{,}81 & 2{,}81 & 0{,}82 & 0{,}35 \\
+ & дин. & 20{,}2 & 1{,}86 & 3{,}29 & 2{,}87 & 2{,}57 & 0{,}82 & 0{,}36 \\
+\hline
+\multirow{2}{*}{$w = 3$} & стат. & 87{,}1 & 2{,}00 & 3{,}82 & 5{,}00 & 5{,}01 & 0{,}96 & 0{,}63 \\
+ & дин. & 86{,}6 & 1{,}96 & 3{,}70 & 5{,}45 & 5{,}30 & 0{,}93 & 0{,}68 \\
+\hline
+\multirow{2}{*}{$w = 5$} & стат. & 190 & 2{,}00 & 3{,}93 & 5{,}22 & 5{,}25 & 0{,}98 & 0{,}65 \\
+ & дин. & 193 & 1{,}97 & 3{,}73 & 6{,}02 & 6{,}06 & 0{,}93 & 0{,}75 \\
+\hline
+\multirow{2}{*}{$w = 9$} & стат. & 816 & 2{,}04 & 4{,}04 & 6{,}01 & 6{,}04 & 1{,}01 & 0{,}75 \\
+ & дин. & 816 & 2{,}00 & 3{,}99 & 6{,}33 & 6{,}67 & 1{,}00 & 0{,}79 \\
+\hline
+\multirow{2}{*}{$w = 15$} & стат. & 3150 & 2{,}00 & 3{,}98 & 6{,}94 & 6{,}82 & 1{,}00 & 0{,}87 \\
+ & дин. & 3153 & 1{,}97 & 3{,}91 & 7{,}29 & 7{,}50 & 0{,}98 & 0{,}91 \\
+\hline
+\end{tabular}
+\end{table}
+
+Выводы:
+\begin{itemize}
+    \item \textbf{До 4 потоков} ускорение почти линейное ($E_4 \approx 0{,}94$--$1{,}0$
+          для $N \ge 500$ и $w \ge 3$): потоки пишут в разные строки, а
+          синхронизация "--- один барьер на итерацию.
+    \item \textbf{Малые матрицы} ускоряются плохо: создание потока стоит
+          около 14~мкс, проход барьера "--- десятки микросекунд, а итерация для
+          $50 \times 50$ длится всего около 52~мкс. Поэтому уже на 8 потоках
+          программа медленнее последовательной ($S_8 < 1$).
+    \item \textbf{От 5 до 8 потоков} подключаются медленные E-ядра. При
+          статическом распределении время итерации определяет поток на
+          E-ядре, а остальные ждут его на барьере; динамическое распределение
+          отдаёт быстрым потокам больше блоков и выигрывает
+          (для $N = 1000$: $S_8 = 5{,}74$ против 5{,}26).
+    \item \textbf{Больше 8 потоков} "--- больше, чем ядер: ускорение не растёт,
+          а эффективность падает.
+    \item \textbf{Чем больше окно}, тем больше вычислений приходится на одну
+          синхронизацию и тем ближе ускорение к идеальному: при $w = 15$
+          получено $S_8 = 7{,}29$. Окно $1 \times 1$ "--- это просто копирование, оно
+          упирается в память, и ускорение не превышает 3{,}3.
+\end{itemize}
+
+\section{Итог работы}
+В ходе лабораторной работы реализована программа многократного применения
+фильтров эрозии и наращивания к матрице вещественных чисел с использованием
+потоков POSIX. Число одновременно работающих потоков задаётся ключом
+\texttt{-t}, а их фактическое количество продемонстрировано средствами macOS
+(\texttt{ps -M}, \texttt{top}) и Linux (\texttt{ps -T}, \texttt{/proc}). Получены
+практические навыки создания и ожидания потоков (\texttt{pthread\_create},
+\texttt{pthread\_join}) и их синхронизации: собственный барьер на мьютексе и
+условной переменной, атомарный счётчик для распределения работы.
+
+\newpage
+\phantomsection
+\addcontentsline{toc}{section}{Приложение А. Исходный код программы}
+\begin{center}
+    {\large\bfseries ПРИЛОЖЕНИЕ А}\\[0.2cm]
+    {\bfseries Исходный код программы}
+\end{center}
+
+Исходный код также доступен в
+\MYhref{https://github.com/evdakCherpak/os_mai_labs}{репозитории на GitHub}.
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.1. main.c}
+\subsection*{А.1. main.c}
+\lstinputlisting[name=main.c]{../src/main.c}
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.2. morph.h}
+\subsection*{А.2. morph.h}
+\lstinputlisting[name=morph.h]{../src/morph.h}
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.3. morph.c}
+\subsection*{А.3. morph.c}
+\lstinputlisting[name=morph.c]{../src/morph.c}
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.4. matrix.h}
+\subsection*{А.4. matrix.h}
+\lstinputlisting[name=matrix.h]{../src/matrix.h}
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.5. matrix.c}
+\subsection*{А.5. matrix.c}
+\lstinputlisting[name=matrix.c]{../src/matrix.c}
+
+\phantomsection
+\addcontentsline{toc}{subsection}{А.6. Makefile}
+\subsection*{А.6. Makefile}
+% escapechar=@ from log-style would break on $@ in the Makefile
+\lstinputlisting[name=Makefile,language=make,escapechar={}]{../Makefile}
+
+\end{document}

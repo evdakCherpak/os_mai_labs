@@ -22,7 +22,7 @@
 
 \begin{titlepage}
 \begin{center}
-    \includegraphics[width=\textwidth]{media/mai_header.jpg}
+    \includegraphics[width=\textwidth]{mai_header.jpg}
 
     \vspace{1cm}
     Министерство науки и высшего образования Российской Федерации\\
@@ -84,6 +84,135 @@ ffmpeg -i zazu_input.mp4 -c:v libx264 zazu_output.mp4
           (создание потоков и их синхронизацию);
     \item управление памятью под буферы кадров и рабочие структуры кодека.
 \end{itemize}
+
+Ниже разобран построчный (не агрегированный) лог одного запуска
+\texttt{strace -f -s 200 -tt ffmpeg -i zazu\_input.mp4 -c:v libx264 out.mp4}
+по пяти хронологическим фазам — от старта процесса до завершения.
+
+\subsection{Запуск процесса}
+Первая группа вызовов — старт процесса и работа динамического загрузчика:
+
+\begin{lstlisting}
+execve("/usr/bin/ffmpeg", ["ffmpeg", "-i", "zazu_input.mp4", ...]) = 0
+access("/etc/ld.so.preload", R_OK) = -1 ENOENT
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+fstat(3, ...) = 0
+mmap(NULL, 70655, PROT_READ, MAP_PRIVATE, 3, 0) = 0x...
+close(3) = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libavdevice.so.60", ...) = 3
+read(3, "\177ELF...", 832) = 832
+fstat(3, ...) = 0
+mmap(...)  mmap(...)  mmap(...)
+close(3) = 0
+\end{lstlisting}
+
+Эта пятёрка \texttt{openat → read → fstat → mmap(×2-4) → close} повторяется
+для каждой из более чем 100 загружаемых разделяемых библиотек: сначала
+основные компоненты \texttt{ffmpeg} (\texttt{libavdevice}, \texttt{libavfilter},
+\texttt{libavformat}, \texttt{libavcodec}, \texttt{libavutil}, \texttt{libx264.so.164}),
+затем их транзитивные зависимости. После загрузки последней библиотеки
+главный поток инициализируется:
+
+\begin{lstlisting}
+arch_prctl(ARCH_SET_FS, 0x...) = 0
+set_tid_address(0x...) = 29257
+set_robust_list(0x..., 24) = 0
+rseq(0x..., 0x20, 0, 0x53053053) = 0
+mprotect(0x..., 16384, PROT_READ) = 0
+mprotect(0x..., 4096, PROT_READ) = 0
+...
+\end{lstlisting}
+Далее следует ещё по одному \texttt{mprotect} на каждый сегмент каждой
+загруженной библиотеки.
+
+Серия \texttt{mprotect(..., PROT\_READ)} переводит только что отображённые
+сегменты библиотек из \texttt{writable} (нужного на время линковки) в
+\texttt{read-only} — запись в них больше не требуется.
+
+\subsection{Настройка окружения}
+\begin{lstlisting}
+sched_getaffinity(0, 512, [0 1 2 3]) = 16
+openat(AT_FDCWD, "zazu_input.mp4", O_RDONLY) = 3
+write(2, "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'zazu_input.mp4':\n", 58) = 58
+\end{lstlisting}
+\texttt{sched\_getaffinity} сообщает ffmpeg доступные ядра CPU (здесь — 4,
+\texttt{[0 1 2 3]}); это число определяет размер будущего пула потоков
+кодирования. Затем открывается и пробуется (probing) входной контейнер —
+результат распознавания формата (\texttt{mov,mp4,...}) ffmpeg печатает в stderr.
+
+\subsection{Построение конвейера}
+У \texttt{ffmpeg} кодек \texttt{libx264} слинкован в тот же процесс, поэтому
+"конвейер" обработки — это не ОС-пайп, а граф \textbf{потоков} с общей памятью
+(\texttt{clone3} с флагом \texttt{CLONE\_VM}), синхронизируемых через
+\texttt{futex} вместо \texttt{read}/\texttt{write} по дескриптору:
+
+\begin{lstlisting}
+openat(AT_FDCWD, "out.mp4", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 4
+clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|...,
+        stack=0x..., stack_size=0x7ff400, ...}) = 29304
+prctl(PR_SET_NAME, "av:h264:df0") = 0
+...
+prctl(PR_SET_NAME, "av:h264:df4") = 0
+prctl(PR_SET_NAME, "dec0:0:h264") = 0
+prctl(PR_SET_NAME, "dmx0:mov,mp4,m4a") = 0
+...
+prctl(PR_SET_NAME, "mux0:mp4") = 0
+\end{lstlisting}
+
+Из 19 вызовов \texttt{clone3} восемь потоков получают явное имя через
+\texttt{prctl(PR\_SET\_NAME, ...)}, которое прямо видно в трассировке и
+раскрывает внутреннюю схему конвейера: \texttt{dmx0} — поток демультиплексора
+(разбирает контейнер на потоки), \texttt{dec0:0:h264} — поток декодера
+видеодорожки, \texttt{av:h264:df0}…\texttt{df4} — пять потоков покадрового
+декодирования H.264 (frame-threading), \texttt{mux0} — поток мультиплексора,
+формирующий выходной MP4. Оставшиеся \textasciitilde11 потоков из 19 —
+безымянный пул worker-потоков кодера \texttt{libx264} (slice-based threading);
+каждый получает собственный стек \textasciitilde8 МБ через
+\texttt{mmap(PROT\_NONE)}+\texttt{mprotect}.
+
+\subsection{Кодирование и запись данных}
+Основная масса вызовов в этой фазе — \texttt{futex}: декодер передаёт готовые
+кадры энкодеру, энкодер раздаёт срезы worker-потокам, каждый из них
+сигнализирует о готовности через \texttt{FUTEX\_WAKE}/\texttt{FUTEX\_WAIT\_BITSET} —
+именно эта активность и даёт те самые 98\% времени в системных вызовах
+из раздела~\ref{sec:categories}.
+
+В выходной файл (дескриптор 4) производится всего \textbf{4 вызова}
+\texttt{write}:
+\begin{lstlisting}
+write(4, "\0\0\0 ftypisom...free...mdat", 48) = 48
+write(4, "...x264 - core 164 ... options: cabac=1 ref=3...", 195063) = 195063
+write(4, "\0\2\371\377", 4) = 4
+write(4, "\0\0\6\203moov\0\0\0lmvhd...", 1667) = 1667
+\end{lstlisting}
+Первый вызов — заголовок контейнера (\texttt{ftyp}/\texttt{free}/заглушка
+\texttt{mdat}); второй — одним вызовом весь закодированный битовый поток H.264
+(195\,063 байта, с различимым SEI-префиксом x264 с версией кодека и
+параметрами кодирования); третий — служебные байты; четвёртый —
+атом \texttt{moov} (индекс фильма), который MP4-мультиплексор по умолчанию
+дописывает в конец файла только после того, как все кадры уже записаны.
+
+\subsection{Завершение процесса}
+Когда кодирование окончено, главный поток завершает worker-потоки один за
+другим — это ядро реализации \texttt{pthread\_join}, построенное на \texttt{futex}:
+\begin{lstlisting}
+futex(0x..., FUTEX_WAKE_PRIVATE, 1) = 1
+rt_sigprocmask(SIG_BLOCK, ~[RT_1], NULL, 8) = 0
+madvise(0x..., 8368128, MADV_DONTNEED) = 0
+exit(0) = ?
++++ exited with 0 +++
+futex(0x..., FUTEX_WAIT_BITSET|FUTEX_CLOCK_REALTIME, ..., NULL, ...) = 0
+munmap(0x..., 8392704) = 0
+\end{lstlisting}
+Главный поток будит очередной рабочий поток (\texttt{FUTEX\_WAKE\_PRIVATE});
+тот блокирует сигналы, освобождает свой стек (\texttt{madvise(MADV\_DONTNEED)})
+и вызывает \texttt{exit(0)} — завершается только сам поток, а не весь процесс
+(в отличие от \texttt{exit\_group}). Главный поток просыпается из
+\texttt{FUTEX\_WAIT\_BITSET} (ожидание на \texttt{child\_tid}, выставленного
+флагом \texttt{CLONE\_CHILD\_CLEARTID} при создании потока) и освобождает его
+стек через \texttt{munmap}. Это повторяется по разу на каждый из 19 потоков.
+После этого главный поток закрывает выходной файл
+(\texttt{close(4)}) и завершает процесс целиком: \texttt{exit\_group(0)}.
 
 \section{Получение полного профиля вызовов}
 
@@ -227,7 +356,7 @@ strace -f -c -e trace=%network -o net_profile.log \
 завершившийся вызов помечается \texttt{<unfinished ...>}, а когда управление
 возвращается к его поток и вызов действительно завершается, соответствующая
 строка получает пометку \texttt{<... resumed>} с итоговым результатом.
-
+ 
 \subsection{Категория: сигналы (\texttt{\%signal})}
 \begin{lstlisting}
 % time     seconds  usecs/call     calls    errors syscall

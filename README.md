@@ -4,7 +4,7 @@
 |---|------|---------|
 | 1 | [Анализ системных вызовов](https://github.com/evdakCherpak/os_mai_labs/tree/main/lab1_syscall_carcas) | FFmpeg |
 | 2 | [Работа с процессами ОС](https://github.com/evdakCherpak/os_mai_labs/tree/main/lab2_proceses_work) | 18 |
-| 3 | <в ожидании> | ? |
+| 3 | [Работа с потоками](https://github.com/evdakCherpak/os_mai_labs/tree/main/lab3_threads) | 12 |
 | 4 | <в ожидании> | ? |
 | 5 | <в ожидании> | ? |
 | 6 | <в ожидании> | ? |

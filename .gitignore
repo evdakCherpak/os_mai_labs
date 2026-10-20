@@ -14,3 +14,7 @@ latex_build/
 *.idx
 *.ind
 *.ilg
+
+# build artifacts
+*.o
+lab3_threads/morph
